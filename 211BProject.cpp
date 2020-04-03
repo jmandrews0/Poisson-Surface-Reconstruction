@@ -44,28 +44,6 @@ Eigen::Vector3d interpolate(const Eigen::Vector3d& q, const Eigen::MatrixXd& N, 
 }
 
 
-// second derivative of gaussian smoothF function
-double laplacian(const Eigen::Vector3d& q, const Eigen::Vector3d& p, double W)
-{
-	//Eigen::Vector3d sigma(1, 1, 1);
-	double E = 2.71828;
-	double PI = 3.14159;
-	double var = 1.0;
-	Eigen::Vector3d diff = (q - p)/(2*W); //* 8.0;
-	return (diff.transpose()*diff - std::pow(var, 2)) / std::pow(var, 4) * std::pow(E, -0.5 / std::pow(var, 2)*diff.transpose()*diff); // std::pow(W, 3);
-}
-
-// first derivative of gaussian smoothF function
-double deriv(double q, double p, double W)
-{
-	double E = 2.71828;
-	double PI = 3.14159;
-	double var = 1.0;
-	double diff = (q - p) / W;
-	return (diff / std::pow(var, 2)) * std::pow(E, -0.5*std::pow(diff / var, 2)); // std::pow(W, 3);
-}
-
-
 int findCell(const Eigen::MatrixXi& CH, const Eigen::MatrixXd& CN, const Eigen::Vector3d& C)
 {
 	bool found = false;
@@ -251,32 +229,6 @@ void generateL(int x_res, int y_res, int z_res, Eigen::SparseMatrix<double>& Lap
 		// z neighbors
 		if(r < size- x_res * y_res) coeff.push_back(Eigen::Triplet<double>(r, r+x_res*y_res, -1));
 		if(r > x_res * y_res) coeff.push_back(Eigen::Triplet<double>(r, r-x_res*y_res, -1));
-		/*
-		// diagonal y neighbors
-		if (r < size - (x_res-1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res-1), -1));
-		if (r < size - (x_res+1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res+1), -1));
-		if (r > (x_res-1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res-1), -1));
-		if (r > (x_res+1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res+1), -1));
-		// diagonal z neighbors
-		if (r < size - (x_res*y_res-1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res*y_res-1), -1));
-		if (r < size - (x_res*y_res+1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res*y_res+1), -1));
-		if (r > (x_res*y_res-1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res*y_res-1), -1));
-		if (r > (x_res*y_res+1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res*y_res+1), -1));
-		// diagonal x neighbors
-		if (r < size - (x_res * y_res - x_res)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res * y_res - x_res), -1));
-		if (r < size - (x_res * y_res + x_res)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res * y_res + x_res), -1));
-		if (r > (x_res * y_res - x_res)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res * y_res - x_res), -1));
-		if (r > (x_res * y_res + x_res)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res * y_res + x_res), -1));
-		// x y z diagonals
-		if (r < size - (x_res - x_res*y_res - 1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res - x_res * y_res - 1), -1));
-		if (r < size - (x_res - x_res*y_res + 1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res - x_res * y_res + 1), -1));
-		if (r > (x_res - x_res * y_res - 1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res - x_res * y_res - 1), -1));
-		if (r > (x_res - x_res * y_res + 1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res - x_res * y_res + 1), -1));
-		if (r < size - (x_res + x_res * y_res - 1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res + x_res * y_res - 1), -1));
-		if (r < size - (x_res + x_res * y_res + 1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res + x_res * y_res + 1), -1));
-		if (r > (x_res + x_res * y_res - 1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res + x_res * y_res - 1), -1));
-		if (r > (x_res + x_res * y_res + 1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res + x_res * y_res + 1), -1));
-		*/
 
 	}
 	Lap.setFromTriplets(coeff.begin(), coeff.end());
@@ -407,20 +359,11 @@ double calcIsovalue(const Eigen::MatrixXd& V, const Eigen::MatrixXi& CH, const E
 	int count = 0;
 	for (int i = 0; i < V.rows(); i++)
 	{
-		//cell = findCell(CH, CN, V.row(i));
-		//std::cout << "found cell " << cell << std::endl;
-		//int l = leaf.at(cell);
-		//std::cout << "got leaf for cell " << l << std::endl;
 		if (sampleToDense.find(i) != sampleToDense.end()) {
-			//std::cout << "    dense has leaf" << i << std::endl;
 			int index = sampleToDense.at(i);
-			//std::cout << "    got index for leaf" << index << std::endl;
 			sum += sol(index);
 			count++;
 		}
-		//Eigen::Vector3d loc = CN.row(cell);
-		// search for correct solution index
-		//std::cout << "added to sum" << std::endl;
 	}
 	return sum / count;
 }
@@ -461,40 +404,7 @@ void applyEdgeConstraints(Eigen::MatrixXd& MatL, const Eigen::VectorXi& L, const
 			edges.push_back(CN(l, 0)); edges.push_back(CN(l, 1)); edges.push_back(CN(l, 2));
 		}
 	}
-		/*
-		if (i == 0)
-		{
-			for (int j = 0; j < CN.rows(); j++)
-			{
-				int l = leaf.at(cell);
-				if (CN.row(j)[0] < CN.row(cell)[0]) { MatL(l, l) = 1e9; count++; 
-					edges.push_back(CN(j,0)); edges.push_back(CN(j, 1)); edges.push_back(CN(j, 2));
-				}
-				else if (CN.row(j)[1] < CN.row(cell)[1]) { MatL(l, l) = 1e9; count++; 
-					edges.push_back(CN(j, 0)); edges.push_back(CN(j, 1)); edges.push_back(CN(j, 2));
-				}
-				else if (CN.row(j)[2] < CN.row(cell)[2]) { MatL(l, l) = 1e9; count++;
-					edges.push_back(CN(j, 0)); edges.push_back(CN(j, 1)); edges.push_back(CN(j, 2));
-				}
-			}
-		}
-		else if (i == 7)
-		{
-			for (int j = 0; j < CN.rows(); j++)
-			{
-				int l = leaf.at(cell);
-				if (CN.row(j)[0] > CN.row(cell)[0]) { MatL(l, l) = 1e9; count++;
-					edges.push_back(CN(j, 0)); edges.push_back(CN(j, 1)); edges.push_back(CN(j, 2));
-				}
-				else if (CN.row(j)[1] > CN.row(cell)[1]) { MatL(l, l) = 1e9; count++;
-					edges.push_back(CN(j, 0)); edges.push_back(CN(j, 1)); edges.push_back(CN(j, 2));
-				}
-				else if (CN.row(j)[2] > CN.row(cell)[2]) { MatL(l, l) = 1e9; count++;
-					edges.push_back(CN(j, 0)); edges.push_back(CN(j, 1)); edges.push_back(CN(j, 2));
-				}
-			}
-		}
-		*/
+
 	Edges = Eigen::Map<Eigen::MatrixXd>(edges.data(), 3, edges.size()/3).transpose();
 }
 
@@ -629,35 +539,7 @@ int main()
 	// PLOTTING DATA AND MESH
 	const Eigen::RowVector3d green(0.2, 0.9, 0.2), blue(0.2, 0.2, 0.8), red(0.8, 0.2, 0.2), white(0.9, 0.9, 0.9), yellow(0.9,0.9,0.2);
 	igl::opengl::glfw::Viewer viewer;
-	/*
-	for (int j = 0; j < S_L.size(); j++)
-	{
-		int i = S_L(j);
-		Eigen::MatrixXd OctreeV1(8, 3);
-		Eigen::MatrixXd OctreeV2(8, 3);
-		Eigen::Vector3d X(S_W(i), 0.0, 0.0);
-		Eigen::Vector3d Y(0.0, S_W(i), 0.0);
-		Eigen::Vector3d Z(0.0, 0.0, S_W(i));
-		OctreeV1 << (S_CN.row(i).transpose() - X / 2.0 - Y / 2.0 - Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() - X / 2.0 - Y / 2.0 + Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() - X / 2.0 + Y / 2.0 - Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() + X / 2.0 + Y / 2.0 + Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() + X / 2.0 - Y / 2.0 - Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() + X / 2.0 - Y / 2.0 + Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() + X / 2.0 + Y / 2.0 - Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() + X / 2.0 + Y / 2.0 + Z / 2.0).transpose();
 
-		OctreeV2 << (S_CN.row(i).transpose() - X / 2.0 + Y / 2.0 - Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() - X / 2.0 + Y / 2.0 + Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() - X / 2.0 + Y / 2.0 + Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() + X / 2.0 + Y / 2.0 - Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() + X / 2.0 + Y / 2.0 - Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() + X / 2.0 + Y / 2.0 + Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() - X / 2.0 + Y / 2.0 - Z / 2.0).transpose(),
-			(S_CN.row(i).transpose() - X / 2.0 + Y / 2.0 + Z / 2.0).transpose();
-		viewer.data().add_edges(OctreeV1, OctreeV2, white);
-	}
-	*/
 	Eigen::MatrixXd intensity(sol.rows(), 3);
 	for (int i = 0; i < sol.rows(); i++)
 	{
