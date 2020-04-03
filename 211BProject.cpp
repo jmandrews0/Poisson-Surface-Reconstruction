@@ -30,6 +30,19 @@ double smoothF(const Eigen::Vector3d& q, const Eigen::Vector3d& p, double W)
 	return std::pow(E, -0.5*diff.transpose()*Cov*diff) / (std::sqrt(2 * PI*Cov.determinant())); // std::pow(W,3);
 }
 
+Eigen::Vector3d interpolate(const Eigen::Vector3d& q, const Eigen::MatrixXd& N, const Eigen::MatrixXd& CN, const Eigen::VectorXi& I)
+{
+	Eigen::Vector3d interpVector = Eigen::Vector3d(0, 0, 0);
+	int pcount = 0;
+	for (int s = 0; s < I.size(); s++)
+	{
+		int index = I(s);
+		interpVector += N.row(index) * smoothF(q, CN.row(index), 1);
+		pcount++;
+	}
+	return interpVector; //= pcount;
+}
+
 
 // second derivative of gaussian smoothF function
 double laplacian(const Eigen::Vector3d& q, const Eigen::Vector3d& p, double W)
@@ -145,6 +158,10 @@ void getNeighborCells(const Eigen::VectorXi& L, Eigen::MatrixXi& CH, const Eigen
 	}
 }
 
+int level(double width, double total)
+{
+	return (int)std::log2(total / width);
+}
 
 Eigen::Vector3d gradientField(	const Eigen::Vector3d& q, // point to interpolate
 								const Eigen::MatrixXd& V, // all vertices
@@ -152,13 +169,10 @@ Eigen::Vector3d gradientField(	const Eigen::Vector3d& q, // point to interpolate
 								const std::vector<std::vector<int>>& PI, // indices of points in each octree cell
 								const Eigen::MatrixXi& CH, // children for each octree cell
 								const Eigen::MatrixXd& CN, // center of each octree cell
-								const Eigen::VectorXd& W) // nearest neighbors of each octree cell
+								const Eigen::VectorXd& W, // nearest neighbors of each octree cell
+								const Eigen::VectorXi& L) // leaf node list
 {
-	// get octree cell containing p
-	//int cell = findCell(CH, CN, q);
-	//Eigen::VectorXi nearest = O_I.row(cell);
-	// iterate through all sample points
-	int pcount = 0;
+	int pcount = 1;
 	Eigen::Vector3d interpVector(0,0,0);
 	/*
 	for (int c = 0; c < nearest.size(); c++)
@@ -172,11 +186,24 @@ Eigen::Vector3d gradientField(	const Eigen::Vector3d& q, // point to interpolate
 		}
 	}
 	*/
-	for (int s = 0; s < V.rows(); s++)
+	// get max depth
+	int max = 0;
+	for (int i = 0; i < L.size(); i++)
 	{
-		int index = findCell(CH, CN, V.row(s)); // get index of octree cell for sample s
-		interpVector += N.row(s) * smoothF(q, CN.row(index), 1.0); //* W(index);
-		pcount++;
+		int lev = level(W(L(i)), W(0));
+		if (lev > max) max = lev;
+	}
+
+	int index = findCell(CH, CN, q);
+	int lev = level(W(index), W(0));
+	if (lev >= max-1)
+	{
+		for (int s = 0; s < V.rows(); s++)
+		{
+			int index = findCell(CH, CN, V.row(s)); // get index of octree cell for sample s
+			interpVector += N.row(s) * smoothF(q, CN.row(index), 1.0); //* W(index);
+			pcount++;
+		}
 	}
 
 	return interpVector / pcount;
@@ -186,49 +213,75 @@ void generateL(int x_res, int y_res, int z_res, Eigen::SparseMatrix<double>& Lap
 {
 	int size = x_res * y_res * z_res;
 	Lap = Eigen::SparseMatrix<double>(size, size);
+	std::vector<Eigen::Triplet<double>> coeff;
 
-	//for (int r = 0; r < size; r++)
-	//{
-		//for (int c = 0; c < size; c++)
-		//{
-			//Lap(r, c) = laplacian(CN.row(L(r)), CN.row(L(c)), W(L(r)));
-		//	Lap.insert(r, c) = 0;
-		//}
-	//}
 	for (int r = 0; r < size; r++)
 	{
 		if (r%x_res == 0) {
-			Lap.insert(r, r) = 1e9;
+			coeff.push_back(Eigen::Triplet<double>(r,r,1e9));//Lap.insert(r, r) = 1e9;
 			continue;
 		}
-		/*
-		if (r%x_res == x_res - 1) {
-			Lap.insert(r, r) = 1e9;
+		if (r%x_res == x_res-1) {
+			coeff.push_back(Eigen::Triplet<double>(r, r, 1e9));//Lap.insert(r, r) = 1e9;
 			continue;
 		}
-		if (r % (x_res*y_res) < x_res) {
-			Lap.insert(r, r) = 1e9;
+		if ((r / x_res) % y_res == 0) {
+			coeff.push_back(Eigen::Triplet<double>(r, r, 1e9));//Lap.insert(r, r) = 1e9;
 			continue;
 		}
-		*/
-		Lap.insert(r, r) = 6;
+		if ((r / x_res) % y_res == y_res-1) {
+			coeff.push_back(Eigen::Triplet<double>(r, r, 1e9));//Lap.insert(r, r) = 1e9;
+			continue;
+		}
+		if ((r / (x_res*y_res)) % z_res == 0) {
+			coeff.push_back(Eigen::Triplet<double>(r, r, 1e9));//Lap.insert(r, r) = 1e9;
+			continue;
+		}
+		if ((r / (x_res*y_res)) % z_res == z_res-1) {
+			coeff.push_back(Eigen::Triplet<double>(r, r, 1e9));//Lap.insert(r, r) = 1e9;
+			continue;
+		}
+		coeff.push_back(Eigen::Triplet<double>(r, r, 6));//Lap.insert(r, r) = 6;
 		// x neighbors
-		if(r < size-1) Lap.insert(r, r + 1) = -1;
-		if(r > 0) Lap.insert(r, r - 1) = -1;
+		if(r < size-1) coeff.push_back(Eigen::Triplet<double>(r, r+1, -1));
+		if(r > 0) coeff.push_back(Eigen::Triplet<double>(r, r-1, -1));
 		// y neighbors
-		if(r < size-x_res) Lap.insert(r, r + x_res) = -1;
-		if(r > x_res) Lap.insert(r, r - x_res) = -1;
+		if(r < size-x_res) coeff.push_back(Eigen::Triplet<double>(r, r+x_res, -1));
+		if(r > x_res) coeff.push_back(Eigen::Triplet<double>(r, r-x_res, -1));
 		// z neighbors
-		if(r < size- x_res * y_res) Lap.insert(r, r + x_res*y_res) = -1;
-		if(r > x_res * y_res) Lap.insert(r, r - x_res*y_res) = -1;
+		if(r < size- x_res * y_res) coeff.push_back(Eigen::Triplet<double>(r, r+x_res*y_res, -1));
+		if(r > x_res * y_res) coeff.push_back(Eigen::Triplet<double>(r, r-x_res*y_res, -1));
+		/*
+		// diagonal y neighbors
+		if (r < size - (x_res-1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res-1), -1));
+		if (r < size - (x_res+1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res+1), -1));
+		if (r > (x_res-1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res-1), -1));
+		if (r > (x_res+1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res+1), -1));
+		// diagonal z neighbors
+		if (r < size - (x_res*y_res-1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res*y_res-1), -1));
+		if (r < size - (x_res*y_res+1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res*y_res+1), -1));
+		if (r > (x_res*y_res-1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res*y_res-1), -1));
+		if (r > (x_res*y_res+1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res*y_res+1), -1));
+		// diagonal x neighbors
+		if (r < size - (x_res * y_res - x_res)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res * y_res - x_res), -1));
+		if (r < size - (x_res * y_res + x_res)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res * y_res + x_res), -1));
+		if (r > (x_res * y_res - x_res)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res * y_res - x_res), -1));
+		if (r > (x_res * y_res + x_res)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res * y_res + x_res), -1));
+		// x y z diagonals
+		if (r < size - (x_res - x_res*y_res - 1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res - x_res * y_res - 1), -1));
+		if (r < size - (x_res - x_res*y_res + 1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res - x_res * y_res + 1), -1));
+		if (r > (x_res - x_res * y_res - 1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res - x_res * y_res - 1), -1));
+		if (r > (x_res - x_res * y_res + 1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res - x_res * y_res + 1), -1));
+		if (r < size - (x_res + x_res * y_res - 1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res + x_res * y_res - 1), -1));
+		if (r < size - (x_res + x_res * y_res + 1)) coeff.push_back(Eigen::Triplet<double>(r, r + (x_res + x_res * y_res + 1), -1));
+		if (r > (x_res + x_res * y_res - 1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res + x_res * y_res - 1), -1));
+		if (r > (x_res + x_res * y_res + 1)) coeff.push_back(Eigen::Triplet<double>(r, r - (x_res + x_res * y_res + 1), -1));
+		*/
+
 	}
+	Lap.setFromTriplets(coeff.begin(), coeff.end());
 }
 
-
-int level(double width, double total)
-{
-	return (int)std::log2(total / width);
-}
 
 double minWidth(const Eigen::VectorXd& W)
 {
@@ -241,18 +294,17 @@ double minWidth(const Eigen::VectorXd& W)
 }
 
 
-void makeDenseOctree(	const Eigen::MatrixXi& CH,
-						const Eigen::MatrixXd& CN,
+void makeDenseField(	const Eigen::MatrixXd& V,
+						const Eigen::MatrixXd& N,
 						const Eigen::VectorXd& W,
 						const Eigen::VectorXi& L,
-						const Eigen::VectorXd& sol,
+						const Eigen::MatrixXi& I,
 						Eigen::VectorXd& denseSol,
 						Eigen::MatrixXd& denseCenters,
-						int& x_res, int& y_res, int& z_res,
-						std::map<int,int>& leafToDense)
+						Eigen::MatrixXd& denseVectors,
+						std::map<int,int>& sampleToDense,
+						int& x_res, int& y_res, int& z_res)
 {
-	std::vector<double> dSol;
-	std::vector<double> dCN;
 	// get max depth
 	int max = 0;
 	for (int i = 0; i < L.size(); i++)
@@ -260,23 +312,23 @@ void makeDenseOctree(	const Eigen::MatrixXi& CH,
 		int lev = level(W(L(i)), W(0));
 		if (lev > max) max = lev;
 	}
-	max = max-1; // JUST FOR TESTING
-
-	// make map from octree space to leaf space
-	std::map<int, int> leaf;
-	for (int i = 0; i < L.size(); i++)
-	{
-		leaf[L(i)] = i;
-	}
+	std::cout << "max depth: " << max << std::endl;
+	if (max > 6) max = 6;
+	//max = max - 1;
 
 	x_res = std::pow(2, max);
 	y_res = std::pow(2, max);
 	z_res = std::pow(2, max);
+	denseSol = Eigen::VectorXd(x_res*y_res*z_res);
+	denseCenters = Eigen::MatrixXd(x_res*y_res*z_res, 3);
+	denseVectors = Eigen::MatrixXd(x_res*y_res*z_res, 3);
 	double step = W(0) / (double)std::pow(2, max);
 	Eigen::Vector3d X(1, 0, 0);
 	Eigen::Vector3d Y(0, 1, 0);
 	Eigen::Vector3d Z(0, 0, 1);
 	Eigen::Vector3d start = X * step / 2.0 + Y * step / 2.0 + Z * step / 2.0 - X * W(0) / 2.0 - Y * W(0) / 2.0 - Z * W(0) / 2.0;
+
+	// initialize values in dense field
 	int count = 0;
 	for (int x = 0; x < x_res; x++)
 	{
@@ -284,28 +336,66 @@ void makeDenseOctree(	const Eigen::MatrixXi& CH,
 		{
 			for (int z = 0; z < z_res; z++)
 			{
-				// get value from sol
 				Eigen::Vector3d C = x * X*step + y * Y*step + z * Z*step + start;
-				int cell = findCell(CH, CN, C);
-				leafToDense[leaf.at(cell)] = count;
-
-				dSol.push_back(sol(leaf.at(cell)));
-				dCN.push_back(C(0));
-				dCN.push_back(C(1));
-				dCN.push_back(C(2));
+				denseSol(count) = 0;
+				denseCenters.row(count) = C;
+				denseVectors.row(count) = Eigen::Vector3d(0, 0, 0);
 				count++;
 			}
 		}
 	}
+	// fill in cells occupied by sample points
+	int totalSize = x_res * y_res * z_res;
+	std::cout << "NUMBER OF SAMPLES: " << V.rows() << std::endl;
+	for (int s = 0; s < V.rows(); s++)
+	{
+		//std::cout << "sample " << s << std::endl;
+		Eigen::Vector3d sample = V.row(s).transpose() + X * W(0) / 2.0 + Y * W(0) / 2.0 + Z * W(0) / 2.0;
+		int index = z_res * y_res * ((int)(sample(0) / step)) + z_res * ((int)(sample(1) / step)) + (int)(sample(2) / step);
+		Eigen::Vector3d center = start + (index%z_res)*Z*step + ((int)(index / z_res)%y_res)*Y*step + ((int)(index / (z_res*y_res))%x_res)*X*step;
+		sampleToDense[s] = index;
 
-	denseSol = Eigen::Map<Eigen::VectorXd>(dSol.data(), dSol.size());
-	denseCenters = Eigen::Map<Eigen::MatrixXd>(dCN.data(), 3, dSol.size()).transpose();
+		denseVectors.row(index) = interpolate(center, N, V, I.row(s));
+		if (index > 0) {
+			int ind = index - 1;
+			center = start + (ind%z_res)*Z*step + ((int)(ind / z_res) % y_res)*Y*step + ((int)(ind / (z_res*y_res)) % x_res)*X*step;
+			denseVectors.row(ind) = interpolate(center, N, V, I.row(s));
+		}
+		if (index < totalSize - 1) {
+			int ind = index + 1;
+			center = start + (ind%z_res)*Z*step + ((int)(ind / z_res) % y_res)*Y*step + ((int)(ind / (z_res*y_res)) % x_res)*X*step;
+			denseVectors.row(ind) = interpolate(center, N, V, I.row(s));
+		}
+		if (index > z_res){
+			int ind = index - z_res;
+			center = start + (ind%z_res)*Z*step + ((int)(ind / z_res) % y_res)*Y*step + ((int)(ind / (z_res*y_res)) % x_res)*X*step;
+			denseVectors.row(ind) = interpolate(center, N, V, I.row(s));
+		}
+		if (index < totalSize-z_res) {
+			int ind = index + z_res;
+			center = start + (ind%z_res)*Z*step + ((int)(ind / z_res) % y_res)*Y*step + ((int)(ind / (z_res*y_res)) % x_res)*X*step;
+			denseVectors.row(ind) = interpolate(center, N, V, I.row(s));
+		}
+		if (index > z_res*y_res) {
+			int ind = index - z_res * y_res;
+			center = start + (ind%z_res)*Z*step + ((int)(ind / z_res) % y_res)*Y*step + ((int)(ind / (z_res*y_res)) % x_res)*X*step;
+			denseVectors.row(ind) = interpolate(center, N, V, I.row(s));
+		}
+		if (index < totalSize - z_res*y_res) {
+			int ind = index + z_res * y_res;
+			center = start + (ind%z_res)*Z*step + ((int)(ind / z_res) % y_res)*Y*step + ((int)(ind / (z_res*y_res)) % x_res)*X*step;
+			denseVectors.row(ind) = interpolate(center, N, V, I.row(s));
+		}
+	}
+	for (int s = 0; s < denseVectors.rows(); s++)
+	{
+		denseSol(s) = denseVectors.row(s).norm();
+	}
 }
 
 
-double calcIsovalue(const Eigen::MatrixXd& V, const Eigen::MatrixXi& CH, const Eigen::MatrixXd& CN, const Eigen::VectorXi& L, const Eigen::VectorXd& sol, const std::map<int, int>& leafToDense)
+double calcIsovalue(const Eigen::MatrixXd& V, const Eigen::MatrixXi& CH, const Eigen::MatrixXd& CN, const Eigen::VectorXi& L, const Eigen::VectorXd& sol, const std::map<int, int>& sampleToDense)
 {
-	std::cout << "calcIsovalue" << std::endl;
 	std::map<int, int> leaf;
 	for (int i = 0; i < L.size(); i++)
 	{
@@ -317,14 +407,14 @@ double calcIsovalue(const Eigen::MatrixXd& V, const Eigen::MatrixXi& CH, const E
 	int count = 0;
 	for (int i = 0; i < V.rows(); i++)
 	{
-		cell = findCell(CH, CN, V.row(i));
-		std::cout << "found cell " << cell << std::endl;
-		int l = leaf.at(cell);
-		std::cout << "got leaf for cell " << l << std::endl;
-		if (leafToDense.find(l) != leafToDense.end()) {
-			std::cout << "    dense has leaf" << l << std::endl;
-			int index = leafToDense.at(l);
-			std::cout << "    got index for leaf" << index << std::endl;
+		//cell = findCell(CH, CN, V.row(i));
+		//std::cout << "found cell " << cell << std::endl;
+		//int l = leaf.at(cell);
+		//std::cout << "got leaf for cell " << l << std::endl;
+		if (sampleToDense.find(i) != sampleToDense.end()) {
+			//std::cout << "    dense has leaf" << i << std::endl;
+			int index = sampleToDense.at(i);
+			//std::cout << "    got index for leaf" << index << std::endl;
 			sum += sol(index);
 			count++;
 		}
@@ -356,7 +446,7 @@ void applyEdgeConstraints(Eigen::MatrixXd& MatL, const Eigen::VectorXi& L, const
 		}
 		if (!leafN) cell = CH(cell, 0);
 	}
-	std::cout << "selected cell: " << CN.row(cell) << std::endl;
+	//std::cout << "selected cell: " << CN.row(cell) << std::endl;
 
 	for (int j = 0; j < L.rows(); j++)
 	{
@@ -428,12 +518,12 @@ void extraPoints(const Eigen::MatrixXd& V, Eigen::MatrixXd& Extra)
 	double diffX = maxX - minX;
 	double diffY = maxY - minY;
 	double diffZ = maxZ - minZ; 
-	Extra.row(V.rows()) = Eigen::Vector3d(maxX + diffX / 2, 0, 0);
-	Extra.row(V.rows()+1) = Eigen::Vector3d(minX - diffX / 2, 0, 0);
-	Extra.row(V.rows()+2) = Eigen::Vector3d(0, maxY + diffY / 2, 0);
-	Extra.row(V.rows()+3) = Eigen::Vector3d(0, minY - diffY / 2, 0);
-	Extra.row(V.rows()+4) = Eigen::Vector3d(0, 0, maxZ + diffZ / 2);
-	Extra.row(V.rows()+5) = Eigen::Vector3d(0, 0, minZ - diffZ / 2);
+	Extra.row(V.rows()) = Eigen::Vector3d(maxX + diffX / 8, 0, 0);
+	Extra.row(V.rows()+1) = Eigen::Vector3d(minX - diffX / 8, 0, 0);
+	Extra.row(V.rows()+2) = Eigen::Vector3d(0, maxY + diffY / 8, 0);
+	Extra.row(V.rows()+3) = Eigen::Vector3d(0, minY - diffY / 8, 0);
+	Extra.row(V.rows()+4) = Eigen::Vector3d(0, 0, maxZ + diffZ / 8);
+	Extra.row(V.rows()+5) = Eigen::Vector3d(0, 0, minZ - diffZ / 8);
 }
 //------------------------------------------------------------------------------------------------------
 
@@ -442,7 +532,7 @@ int main()
 	// load sample points
 	Eigen::MatrixXd V;
 	Eigen::MatrixXi F;
-	igl::readOBJ("curve.obj",V,F);
+	igl::readOBJ("hourglass.obj",V,F);
 
 	// Build octree for k nearest neighbors S_I
 	std::vector<std::vector<int > > O_PI;
@@ -504,77 +594,37 @@ int main()
 	}
 	std::cout << "calculated normals" << std::endl;
 
-	// GENERATE VECTOR FIELD
-	Eigen::MatrixXd S_N(S_LCN.rows(), 3);
-	//int count = 0;
-	//double min = minWidth(S_W);
-	for (int i=0; i<S_LCN.rows(); i++)
-	{
-		//S_N.row(i) = Eigen::Vector3d(0, 0, 0);
-		S_N.row(i) = gradientField(S_LCN.row(i), V, N, S_PI, S_CH, S_CN, S_W);
-	}
-	/*
-	std::map<int, int> leaf;
-	for (int i = 0; i < S_L.size(); i++)
-	{
-		leaf[S_L(i)] = i;
-	}
-	for (int i = 0; i < V.rows(); i++)
-	{
-		int cell = findCell(S_CH, S_CN, V.row(i));
-		S_N.row(leaf.at(cell)) = N.row(i);
-	}
-	*/
-	std::cout << "Generated Vector Field" << std::endl;
-
-	// GET NEIGHBOR CELLS TO EACH CELL
-	//Eigen::MatrixXi Neighbors;
-	//getNeighborCells(S_L, S_CH, S_CN, S_W, Neighbors);
-	//std::cout << "Found leaf cell Neighbors" << std::endl;
-
-	// REFORMAT OCTREE SPACE TO HAVE CONSTANT RESOLUTION
-	Eigen::VectorXd VN(S_N.rows());
-	for (int i = 0; i < S_N.rows(); i++)
-	{
-		VN(i) = S_N.row(i).norm();
-	}
+	// GENERATE VECTOR FIELD WITH CONSTANT RESOLUTION
 	Eigen::VectorXd denseField;
 	Eigen::MatrixXd denseCenters;
+	Eigen::MatrixXd denseVectors;
+	std::map<int, int> sampleToDense;
 	int x_res; int y_res; int z_res;
-	std::map<int, int> leafToDense;
-	makeDenseOctree(S_CH, S_CN, S_W, S_L, VN, denseField, denseCenters, x_res, y_res, z_res, leafToDense);
-	std::cout << "sol: " << S_N.size() << "denseSol: " << denseField.size() << "denseCenters" << denseCenters.size() << std::endl;
+	makeDenseField(V, N, S_W, S_L, S_I, denseField, denseCenters, denseVectors, sampleToDense, x_res, y_res, z_res);
+	std::cout << "denseSol: " << denseField.size() << "denseCenters" << denseCenters.size() << std::endl;
 	std::cout << x_res << ", " << y_res << ", " << z_res << std::endl;
 	
 	// CREATE LAPLACIAN MATRIX
 	Eigen::SparseMatrix<double> MatL; // make SparseMatrix<double>
 	generateL(x_res, y_res, z_res, MatL);
-	//Eigen::MatrixXd Edges;
-	//applyEdgeConstraints(MatL, S_L, S_CH, S_CN, Edges);
-	//std::cout << "Edge cells: " << Edges.rows() << std::endl;
-	//MatL += Eigen::MatrixXd::Identity(MatL.rows(), MatL.cols())*1e-8;
 	std::cout << "Generated Laplacian" << std::endl;
 
 	// SOLVE min||Lx-v||^2 USING SVD
-	//Eigen::VectorXd sol = MatL.bdcSvd(Eigen::ComputeThinU | Eigen::ComputeThinV).solve(VN);
-	
-	//Eigen::BDCSVD<Eigen::MatrixXd> bdcsvd(MatL, Eigen::ComputeThinU | Eigen::ComputeThinV);
-	//Eigen::VectorXd sol = bdcsvd.solve(VN);
-	//Eigen::VectorXd sol = (MatL.transpose() * MatL).ldlt().solve(MatL.transpose() * denseField);
 	Eigen::LeastSquaresConjugateGradient<Eigen::SparseMatrix<double>> lscg;
 	lscg.compute(MatL);
 	Eigen::VectorXd sol = lscg.solve(denseField);
-	//sol = Eigen::VectorXd::Ones(sol.size()).normalized() - sol.normalized();
 	std::cout << "Computed Indicator Function" << std::endl;
 
 	// APPROXIMATE ISOVALUE NEAR SURFACE
-	double isovalue = calcIsovalue(V, S_CH, S_CN, S_L, sol, leafToDense);
+	double isovalue = calcIsovalue(V, S_CH, S_CN, S_L, sol, sampleToDense);
 	std::cout << "isovalue = " << isovalue << std::endl;
 
 	// MARCHING CUBES ALGORITHM
 	Eigen::MatrixXd V_Recon;
 	Eigen::MatrixXi F_Recon;
 	igl::copyleft::marching_cubes(sol, denseCenters, x_res, y_res, z_res, isovalue, V_Recon, F_Recon);
+
+	std::cout << "finished marching cubes" << std::endl;
 	
 	// PLOTTING DATA AND MESH
 	const Eigen::RowVector3d green(0.2, 0.9, 0.2), blue(0.2, 0.2, 0.8), red(0.8, 0.2, 0.2), white(0.9, 0.9, 0.9), yellow(0.9,0.9,0.2);
@@ -613,6 +663,11 @@ int main()
 	{
 		intensity.row(i) = Eigen::Vector3d(0,sol(i),0);
 	}
+	Eigen::MatrixXd VField(sol.rows(), 3);
+	for (int i = 0; i < sol.rows(); i++)
+	{
+		VField.row(i) = Eigen::Vector3d(0, denseField(i), 0);
+	}
 	
 	std::ofstream myfile;
 	myfile.open("sol.txt");
@@ -623,8 +678,8 @@ int main()
 	viewer.data().set_mesh(V_Recon, F_Recon);
 	viewer.data().set_face_based(true);
 	viewer.data().add_points(V, red);
-	//viewer.data().add_edges(S_LCN + S_N, S_LCN, green);
-	viewer.data().add_edges(V + N, V, green);
+	//viewer.data().add_edges(denseCenters + denseVectors, denseCenters, green);
+	//viewer.data().add_edges(V + N, V, green);
 	//std::cout << "solution space: "<< denseSol.rows() << ", centers: " << denseCenters.rows() << ", intensity: " << intensity.size() << std::endl;
 	//viewer.data().add_edges(denseCenters + intensity, denseCenters, white);
 	viewer.launch();
